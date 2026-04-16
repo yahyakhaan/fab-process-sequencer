@@ -5,6 +5,8 @@ use axum::{
     routing::get,
 };
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use tokio::sync::mpsc;
 use tower_http::cors::CorsLayer;
 
 // 1. Data Structures
@@ -20,6 +22,15 @@ struct ProcessStep {
 #[derive(Debug, Deserialize)]
 struct RecipePayload {
     steps: Vec<ProcessStep>,
+}
+
+// outgoing payload
+#[derive(Debug, Serialize)]
+struct TelemetryEvent {
+    step_id: String,
+    progress_sec: u64,
+    current_value: f64,
+    status: String,
 }
 
 // 2. Entry Point
@@ -49,28 +60,62 @@ async fn ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
 async fn handle_socket(mut socket: WebSocket) {
     println!("Frontend engineer connected to the fab!");
 
-    while let Some(Ok(msg)) = socket.recv().await {
-        if let Message::Text(text) = msg {
-            println!("Received raw payload: {}", text);
+    // Create an in-memory channel to act as our telemetry broker
+    // tx = transmitter (producer), rx = receiver (consumer)
+    let (tx, mut rx) = mpsc::channel::<String>(100);
 
-            match serde_json::from_str::<RecipePayload>(&text) {
-                Ok(recipe) => {
-                    println!(
-                        "Successfully parsed recipe with {} steps.",
-                        recipe.steps.len()
-                    );
-                    for step in recipe.steps {
-                        println!(
-                            "  -> {}: {} for {}s at {}",
-                            step.id, step.action, step.duration_sec, step.target_value
-                        );
+    // Use tokio::select! to handle multiple async streams concurrently
+    loop {
+        tokio::select! {
+            // Listen for messages from the frontend
+            msg = socket.recv() => {
+                if let Some(Ok(Message::Text(text))) = msg {
+                    if let Ok(recipe) = serde_json::from_str::<RecipePayload>(&text) {
+                        println!("Starting recipe simulation...");
+
+                        let tx_clone = tx.clone();
+
+                        // Spawn an isolated background task to run the hardware simulation
+                        tokio::spawn(async move {
+                            for step in recipe.steps {
+                                for sec in 1..=step.duration_sec {
+                                    // Simulate hardware ramp-up over time
+                                    let progress_ratio = sec as f64 / step.duration_sec as f64;
+                                    let current_val = step.target_value * progress_ratio;
+
+                                    let event = TelemetryEvent {
+                                        step_id: step.id.clone(),
+                                        progress_sec: sec,
+                                        current_value: current_val,
+                                        status: step.action.clone(),
+                                    };
+
+                                    // Serialize the event and publish it to the channel
+                                    if let Ok(json) = serde_json::to_string(&event) {
+                                        let _ = tx_clone.send(json).await;
+                                    }
+
+                                    // Sleep to simulate time passing (sped up for demo)
+                                    tokio::time::sleep(Duration::from_millis(100)).await;
+                                }
+                            }
+                            // Notify that the recipe is done
+                            let _ = tx_clone.send(r#"{"status":"Complete"}"#.to_string()).await;
+                        });
                     }
+                } else if msg.is_none() {
+                    println!("Frontend disconnected.");
+                    break; // Exit the loop if the connection closes
                 }
-                Err(e) => {
-                    eprintln!("Failed to parse JSON: {}", e);
+            }
+
+            // Listen for telemetry events from the simulation task
+            Some(telemetry_json) = rx.recv() => {
+                // Forward the internal telemetry directly to the frontend WebSocket
+                if socket.send(Message::Text(telemetry_json.into())).await.is_err() {
+                    break;
                 }
             }
         }
     }
-    println!("Frontend engineer disconnected.");
 }
