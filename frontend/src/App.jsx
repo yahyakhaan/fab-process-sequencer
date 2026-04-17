@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import ReactFlow, { Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge } from 'reactflow';
+import { buildExecutionSequence } from './utils/graphParser';
+
 import 'reactflow/dist/style.css';
 import ProcessNode from './components/ProcessNode';
 
@@ -55,21 +57,40 @@ function App() {
   const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
   const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), []);
 
-  const deployToFab = () => {
-    const steps = nodes.map((node) => ({
-      id: node.id,
-      action: node.data.action,
-      duration_sec: node.data.duration_sec,
-      target_value: node.data.target_value
-    }));
+  // const deployToFab = () => {
+  //   const steps = nodes.map((node) => ({
+  //     id: node.id,
+  //     action: node.data.action,
+  //     duration_sec: node.data.duration_sec,
+  //     target_value: node.data.target_value
+  //   }));
 
-    const payload = { steps };
+  //   const payload = { steps };
     
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify(payload));
-      setLogs(prev => [...prev, `> Deployed recipe with ${steps.length} steps.`]);
-    } else {
-      alert("WebSocket is not connected!");
+  //   if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+  //     ws.current.send(JSON.stringify(payload));
+  //     setLogs(prev => [...prev, `> Deployed recipe with ${steps.length} steps.`]);
+  //   } else {
+  //     alert("WebSocket is not connected!");
+  //   }
+  // };
+
+  const deployToFab = () => {
+    try {
+      // Traverse the graph visually
+      const steps = buildExecutionSequence(nodes, edges);
+      const payload = { steps };
+      
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        ws.current.send(JSON.stringify(payload));
+        setLogs(prev => [...prev, `> Deployed sequence of ${steps.length} steps.`]);
+      } else {
+        alert("WebSocket is not connected! Is the Rust server running?");
+      }
+    } catch (error) {
+      // Catch cycle errors or disconnected graphs
+      alert(error.message);
+      setLogs(prev => [...prev, `> Deployment Failed: ${error.message}`]);
     }
   };
 
