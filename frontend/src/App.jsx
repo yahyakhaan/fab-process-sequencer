@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import { useCallback, useState, useMemo } from 'react';
 import ReactFlow, { Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge } from 'reactflow';
 import { buildExecutionSequence } from './utils/graphParser';
+import { useFabSocket } from './hooks/useFabSocket';
 
 import 'reactflow/dist/style.css';
 import ProcessNode from './components/ProcessNode';
@@ -35,62 +36,32 @@ function App() {
 
   const [nodes, setNodes] = useState(initialNodes);
   const [edges, setEdges] = useState(initialEdges);
-  const [logs, setLogs] = useState([]);
-  const ws = useRef(null);
 
-  useEffect(() => {
-    ws.current = new WebSocket('ws://127.0.0.1:3000/ws');
-    ws.current.onopen = () => setLogs(prev => [...prev, '> Connected to Rust Fab Backend']);
-    ws.current.onmessage = (msg) => {
-      const data = JSON.parse(msg.data);
-      if (data.status === "Complete") {
-        setLogs(prev => [...prev, `> FAB SEQUENCE COMPLETE`]);
-      } else {
-        setLogs(prev => [...prev, `> [${data.step_id}] ${data.status.toUpperCase()} | Target: ${Math.round(data.current_value)} | Sec: ${data.progress_sec}`]);
+  // 4. Use the custom WebSocket hook
+  const { logs, activeStepId, sendPayload } = useFabSocket('ws://127.0.0.1:3000/ws');
+
+  // 5. Dynamically map over nodes to inject the isActive flag based on telemetry
+  const activeNodes = useMemo(() => {
+    return nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        isActive: node.id === activeStepId
       }
-    };
-    ws.current.onerror = () => setLogs(prev => [...prev, '> WebSocket Error']);
-    return () => ws.current?.close();
-  }, []);
+    }));
+  }, [nodes, activeStepId]);
 
   const onNodesChange = useCallback((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), []);
   const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), []);
-
-  // const deployToFab = () => {
-  //   const steps = nodes.map((node) => ({
-  //     id: node.id,
-  //     action: node.data.action,
-  //     duration_sec: node.data.duration_sec,
-  //     target_value: node.data.target_value
-  //   }));
-
-  //   const payload = { steps };
-    
-  //   if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-  //     ws.current.send(JSON.stringify(payload));
-  //     setLogs(prev => [...prev, `> Deployed recipe with ${steps.length} steps.`]);
-  //   } else {
-  //     alert("WebSocket is not connected!");
-  //   }
-  // };
-
   const deployToFab = () => {
     try {
       // Traverse the graph visually
       const steps = buildExecutionSequence(nodes, edges);
-      const payload = { steps };
-      
-      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        ws.current.send(JSON.stringify(payload));
-        setLogs(prev => [...prev, `> Deployed sequence of ${steps.length} steps.`]);
-      } else {
-        alert("WebSocket is not connected! Is the Rust server running?");
-      }
+      sendPayload({ steps });
     } catch (error) {
       // Catch cycle errors or disconnected graphs
       alert(error.message);
-      setLogs(prev => [...prev, `> Deployment Failed: ${error.message}`]);
     }
   };
 
@@ -106,7 +77,7 @@ function App() {
       <div style={{ flex: 1, display: 'flex' }}>
         <div style={{ flex: 2 }}>
           <ReactFlow 
-            nodes={nodes} 
+            nodes={activeNodes} 
             edges={edges} 
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange} 

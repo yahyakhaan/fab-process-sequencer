@@ -7,8 +7,19 @@ export default function ProcessNode({ data, id }) {
     data.updateNodeData(id, name, Number(value));
   }, [data, id]);
 
+  const containerStyle = {
+    background: data.isActive ? '#1a3320' : '#222',
+    border: data.isActive ? '2px solid #00ff00' : '1px solid #555',
+    boxShadow: data.isActive ? '0 0 15px rgba(0, 255, 0, 0.4)' : 'none',
+    transition: 'all 0.2s ease-in-out',
+    borderRadius: '8px', 
+    padding: '10px', 
+    color: '#fff', 
+    minWidth: '150px'
+  };
+
   return (
-    <div style={{ background: '#222', border: '1px solid #555', borderRadius: '8px', padding: '10px', color: '#fff', minWidth: '150px' }}>
+    <div style={containerStyle}>
       <Handle type="target" position={Position.Top} style={{ background: '#555' }} />
       
       <div style={{ fontWeight: 'bold', marginBottom: '8px', borderBottom: '1px solid #444', paddingBottom: '4px' }}>
