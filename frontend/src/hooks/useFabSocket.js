@@ -1,5 +1,4 @@
-// frontend/src/hooks/useFabSocket.js
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
 export function useFabSocket(url) {
   const ws = useRef(null);
@@ -8,7 +7,6 @@ export function useFabSocket(url) {
 
   useEffect(() => {
     ws.current = new WebSocket(url);
-    
     ws.current.onopen = () => setLogs(prev => [...prev, '> Connected to Rust Fab Backend']);
     
     ws.current.onmessage = (msg) => {
@@ -23,7 +21,6 @@ export function useFabSocket(url) {
     };
     
     ws.current.onerror = () => setLogs(prev => [...prev, '> WebSocket Error']);
-    
     return () => ws.current?.close();
   }, [url]);
 
@@ -36,5 +33,7 @@ export function useFabSocket(url) {
     }
   };
 
-  return { logs, activeStepId, sendPayload };
+  const clearLogs = useCallback(() => setLogs([]), []);
+
+  return { logs, activeStepId, sendPayload, clearLogs }; 
 }

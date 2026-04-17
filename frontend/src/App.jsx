@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo } from 'react';
+import { useCallback, useState, useMemo, useRef, useEffect } from 'react';
 import ReactFlow, { Background, Controls, applyNodeChanges, applyEdgeChanges, addEdge } from 'reactflow';
 import { buildExecutionSequence } from './utils/graphParser';
 import { useFabSocket } from './hooks/useFabSocket';
@@ -7,7 +7,7 @@ import 'reactflow/dist/style.css';
 import ProcessNode from './components/ProcessNode';
 
 function App() {
-  // 1. Function that updates node data when inputs change
+    // 1. Function that updates node data when inputs change
   const updateNodeData = useCallback((nodeId, fieldName, value) => {
     setNodes((nds) =>
       nds.map((node) => {
@@ -19,7 +19,7 @@ function App() {
     );
   }, []);
 
-  // 2. Setup initial nodes using the custom data structure
+    // 2. Setup initial nodes using the custom data structure
   const initialNodes = useMemo(() => [
     { id: 'step-1', position: { x: 250, y: 50 }, type: 'processNode', data: { label: 'Spin Coat', action: 'spin_coat', duration_sec: 45, target_value: 3000, updateNodeData } },
     { id: 'step-2', position: { x: 250, y: 200 }, type: 'processNode', data: { label: 'Soft Bake', action: 'bake', duration_sec: 60, target_value: 120, updateNodeData } },
@@ -38,7 +38,13 @@ function App() {
   const [edges, setEdges] = useState(initialEdges);
 
   // 4. Use the custom WebSocket hook
-  const { logs, activeStepId, sendPayload } = useFabSocket('ws://127.0.0.1:3000/ws');
+  const { logs, activeStepId, sendPayload, clearLogs } = useFabSocket('ws://127.0.0.1:3000/ws');
+
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
 
   // 5. Dynamically map over nodes to inject the isActive flag based on telemetry
   const activeNodes = useMemo(() => {
@@ -56,17 +62,15 @@ function App() {
   const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), []);
   const deployToFab = () => {
     try {
-      // Traverse the graph visually
       const steps = buildExecutionSequence(nodes, edges);
       sendPayload({ steps });
     } catch (error) {
-      // Catch cycle errors or disconnected graphs
       alert(error.message);
     }
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#121212' }}>
+    <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#121212', overflow: 'hidden' }}>
       <div style={{ padding: '15px 25px', background: '#1e1e1e', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontFamily: 'sans-serif' }}>
         <h2 style={{ margin: 0 }}>Process Sequencer</h2>
         <button onClick={deployToFab} style={{ padding: '10px 20px', background: '#007acc', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
@@ -74,7 +78,7 @@ function App() {
         </button>
       </div>
 
-      <div style={{ flex: 1, display: 'flex' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <div style={{ flex: 2 }}>
           <ReactFlow 
             nodes={activeNodes} 
@@ -90,9 +94,20 @@ function App() {
           </ReactFlow>
         </div>
 
-        <div style={{ flex: 1, background: '#000', color: '#0f0', padding: '20px', fontFamily: 'monospace', overflowY: 'auto', borderLeft: '2px solid #333' }}>
-          <h3 style={{ marginTop: 0, color: '#fff' }}>Live Telemetry Log</h3>
-          {logs.map((log, index) => <div key={index} style={{ marginBottom: '4px' }}>{log}</div>)}
+        <div style={{ flex: 1, background: '#000', color: '#0f0', padding: '20px', fontFamily: 'monospace', borderLeft: '2px solid #333', display: 'flex', flexDirection: 'column' }}>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #333', paddingBottom: '10px' }}>
+            <h3 style={{ margin: 0, color: '#fff' }}>Live Telemetry</h3>
+            <button onClick={clearLogs} style={{ background: '#333', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
+              Clear
+            </button>
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {logs.map((log, index) => <div key={index} style={{ marginBottom: '4px' }}>{log}</div>)}
+            <div ref={messagesEndRef} />
+          </div>
+          
         </div>
       </div>
     </div>
