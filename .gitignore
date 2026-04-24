@@ -3,5 +3,6 @@ dist/
 build/
 .next/
 out/
+.DS_Store
 
 target/

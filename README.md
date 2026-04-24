@@ -89,4 +89,4 @@ http://localhost:5173
 
 ## Vision
 
-This project demonstrates how modern software architecture can transform rigid industrial workflows into flexible, programmable systems using real-time distributed execution.
+Next: replace the simulator with real SCPI command dispatch to a physical instrument over USB or GPIB.
