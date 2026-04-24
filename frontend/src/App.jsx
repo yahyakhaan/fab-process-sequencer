@@ -72,7 +72,7 @@ function App() {
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#121212', overflow: 'hidden' }}>
       <div style={{ padding: '15px 25px', background: '#1e1e1e', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontFamily: 'sans-serif' }}>
-        <h2 style={{ margin: 0 }}>Process Sequencer</h2>
+        <h2 style={{ margin: 0 }}>Fab Process Sequencer</h2>
         <button onClick={deployToFab} style={{ padding: '10px 20px', background: '#007acc', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
           Deploy to Fab
         </button>

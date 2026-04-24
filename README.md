@@ -10,12 +10,28 @@ In semiconductor manufacturing, iteration speed is often limited by rigid hardwa
 
 **The Solution:** This system decouples _process design_ from _hardware execution_. Engineers design workflows visually as graphs, which are compiled into execution logic and run by a concurrent Rust backend with real-time telemetry streaming back to the UI.
 
-## 🛠 Tech Stack
+## Usage
+
+1. Drag nodes (Spin Coat, Bake, Exposure) onto canvas
+2. Configure parameters (RPM, temperature, duration, etc.)
+3. Connect nodes to define process flow
+4. Click **Deploy to Fab**
+5. Watch real-time execution and telemetry updates
+
+## Tech Stack
 
 - **Frontend:** React, JavaScript, React Flow, WebSockets
 - **Backend:** Rust, Axum, Tokio, Serde
 - **Communication:** Full-duplex WebSockets
 - **Architecture:** Event-driven system using `mpsc` channels
+
+## In Action
+
+**Live execution with real-time telemetry streaming:**
+![Process Sequencer Running](./assets/process-sequencer.gif)
+
+**Dynamic node reordering with automatic topological sorting:**
+![Topological Sort](./assets/topological-sort.gif)
 
 ## Core Features
 
@@ -70,14 +86,6 @@ Open:
 ```
 http://localhost:5173
 ```
-
-## Usage
-
-1. Drag nodes (Spin Coat, Bake, Exposure) onto canvas
-2. Configure parameters (RPM, temperature, duration, etc.)
-3. Connect nodes to define process flow
-4. Click **Deploy to Fab**
-5. Watch real-time execution and telemetry updates
 
 ## Vision
 
