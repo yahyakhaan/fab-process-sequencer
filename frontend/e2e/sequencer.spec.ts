@@ -56,7 +56,7 @@ test('supports drag, drop, and removal at a mobile viewport', async ({ page }) =
 test('recovers after a heartbeat timeout', async ({ page }) => {
   let connectionCount = 0;
   await page.clock.install();
-  await page.routeWebSocket('ws://127.0.0.1:3000/ws', (connection) => {
+  await page.routeWebSocket('ws://127.0.0.1:5173/ws', (connection) => {
     const serverConnection = connection.connectToServer();
     connectionCount += 1;
     if (connectionCount === 1) {

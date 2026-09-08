@@ -142,5 +142,7 @@ export function parseServerMessage(raw: string): ServerMessage {
 export function getFabWebSocketUrl(): string {
   const configuredUrl = import.meta.env.VITE_FAB_WS_URL;
   if (configuredUrl) return configuredUrl;
-  return 'ws://127.0.0.1:3000/ws';
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
 }
