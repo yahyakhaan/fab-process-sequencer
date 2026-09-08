@@ -334,6 +334,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn exposure_remains_constant_at_the_configured_intensity() {
+        let step = StepConfig::Expose {
+            intensity_mw_cm2: 18.5,
+            duration_sec: 10,
+        };
+
+        assert_eq!(
+            simulate_telemetry(&step, 1),
+            Telemetry::Expose {
+                intensity_mw_cm2: 18.5,
+            }
+        );
+        assert_eq!(
+            simulate_telemetry(&step, 10),
+            Telemetry::Expose {
+                intensity_mw_cm2: 18.5,
+            }
+        );
+    }
+
     #[tokio::test]
     async fn cancellation_emits_a_terminal_event() {
         let (tx, mut rx) = mpsc::channel(16);
@@ -379,5 +400,92 @@ mod tests {
             rx.recv().await,
             Some(ServerMessage::RunFailed { code, .. }) if code == "tool_fault"
         ));
+    }
+
+    #[tokio::test]
+    async fn sensor_fault_emits_the_bad_sample_before_failing() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let (_cancel_tx, cancel_rx) = watch::channel(false);
+
+        run_recipe(
+            "run-sensor".to_string(),
+            vec![spin_node(2)],
+            100.0,
+            Some(FaultInjection::SensorOutOfRange),
+            cancel_rx,
+            tx,
+        )
+        .await;
+
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMessage::StepStarted { .. })
+        ));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMessage::StepProgress {
+                telemetry: Telemetry::SpinCoat { rpm: 25_000.0 },
+                ..
+            })
+        ));
+        assert!(matches!(
+            rx.recv().await,
+            Some(ServerMessage::RunFailed { code, .. }) if code == "sensor_out_of_range"
+        ));
+    }
+
+    #[tokio::test]
+    async fn successful_run_has_monotonic_simulated_time_and_one_terminal_event() {
+        let (tx, mut rx) = mpsc::channel(32);
+        let (_cancel_tx, cancel_rx) = watch::channel(false);
+
+        run_recipe(
+            "run-success".to_string(),
+            vec![spin_node(2), spin_node(1)],
+            100.0,
+            None,
+            cancel_rx,
+            tx,
+        )
+        .await;
+
+        let mut previous_time = 0;
+        let mut terminal_count = 0;
+        while let Some(message) = rx.recv().await {
+            let simulated_time_ms = match message {
+                ServerMessage::RunAccepted {
+                    simulated_time_ms, ..
+                }
+                | ServerMessage::StepStarted {
+                    simulated_time_ms, ..
+                }
+                | ServerMessage::StepProgress {
+                    simulated_time_ms, ..
+                }
+                | ServerMessage::StepCompleted {
+                    simulated_time_ms, ..
+                }
+                | ServerMessage::RunCompleted {
+                    simulated_time_ms, ..
+                }
+                | ServerMessage::RunCancelled {
+                    simulated_time_ms, ..
+                }
+                | ServerMessage::RunFailed {
+                    simulated_time_ms, ..
+                } => simulated_time_ms,
+                ServerMessage::ConnectionReady { .. }
+                | ServerMessage::RunRejected { .. }
+                | ServerMessage::Pong { .. } => continue,
+            };
+            assert!(simulated_time_ms >= previous_time);
+            previous_time = simulated_time_ms;
+            if matches!(message, ServerMessage::RunCompleted { .. }) {
+                terminal_count += 1;
+            }
+        }
+
+        assert_eq!(previous_time, 3_000);
+        assert_eq!(terminal_count, 1);
     }
 }

@@ -115,7 +115,7 @@ impl SimulationConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     RunRecipe {
@@ -135,7 +135,7 @@ pub enum ClientMessage {
     },
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Telemetry {
     SpinCoat { rpm: f64 },
@@ -143,7 +143,7 @@ pub enum Telemetry {
     Expose { intensity_mw_cm2: f64 },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     ConnectionReady {
@@ -444,5 +444,109 @@ mod tests {
             serde_json::from_str(r#"{"time_scale":10,"fault":"sensor_out_of_range"}"#).unwrap();
         assert_eq!(fault.fault, Some(FaultInjection::SensorOutOfRange));
         assert!(fault.validate().is_ok());
+    }
+
+    #[test]
+    fn client_protocol_round_trips_without_losing_fields() {
+        let message = ClientMessage::RunRecipe {
+            schema_version: PROTOCOL_VERSION,
+            request_id: "round-trip-client".to_string(),
+            recipe: valid_recipe(),
+            simulation: SimulationConfig {
+                time_scale: 25.0,
+                fault: Some(FaultInjection::SensorOutOfRange),
+            },
+        };
+
+        let json = serde_json::to_string(&message).unwrap();
+        let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            ClientMessage::RunRecipe {
+                request_id,
+                simulation: SimulationConfig {
+                    time_scale: 25.0,
+                    fault: Some(FaultInjection::SensorOutOfRange),
+                },
+                ..
+            } if request_id == "round-trip-client"
+        ));
+    }
+
+    #[test]
+    fn server_protocol_round_trips_terminal_events() {
+        let message = ServerMessage::RunFailed {
+            schema_version: PROTOCOL_VERSION,
+            run_id: "run-round-trip".to_string(),
+            step_id: Some("step-1".to_string()),
+            code: "tool_fault".to_string(),
+            message: "Interlock open".to_string(),
+            timestamp_ms: 500,
+            simulated_time_ms: 3_000,
+        };
+
+        let json = serde_json::to_string(&message).unwrap();
+        let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            decoded,
+            ServerMessage::RunFailed {
+                run_id,
+                step_id: Some(step_id),
+                code,
+                simulated_time_ms: 3_000,
+                ..
+            } if run_id == "run-round-trip" && step_id == "step-1" && code == "tool_fault"
+        ));
+    }
+
+    #[test]
+    fn enforces_node_edge_and_duration_limits() {
+        let template = valid_recipe().nodes[0].clone();
+        let mut too_many_nodes = valid_recipe();
+        too_many_nodes.nodes = (0..65)
+            .map(|index| RecipeNode {
+                id: format!("step-{index}"),
+                ..template.clone()
+            })
+            .collect();
+        let node_errors = validate_recipe(&too_many_nodes).unwrap_err();
+        assert!(
+            node_errors
+                .iter()
+                .any(|error| error.contains("1 to 64 nodes"))
+        );
+
+        let mut too_many_edges = valid_recipe();
+        too_many_edges.edges = (0..257)
+            .map(|index| RecipeEdge {
+                id: format!("edge-{index}"),
+                source: "step-1".to_string(),
+                target: "missing".to_string(),
+            })
+            .collect();
+        let edge_errors = validate_recipe(&too_many_edges).unwrap_err();
+        assert!(
+            edge_errors
+                .iter()
+                .any(|error| error.contains("no more than 256 edges"))
+        );
+
+        let mut too_long = valid_recipe();
+        too_long.nodes = (0..5)
+            .map(|index| RecipeNode {
+                id: format!("long-step-{index}"),
+                step: StepConfig::Bake {
+                    temperature_c: 120.0,
+                    duration_sec: 3_600,
+                },
+                ..template.clone()
+            })
+            .collect();
+        let duration_errors = validate_recipe(&too_long).unwrap_err();
+        assert!(
+            duration_errors
+                .iter()
+                .any(|error| error.contains("14400 total step-seconds"))
+        );
     }
 }
