@@ -6,5 +6,4 @@ services:
     region: oregon
     dockerfilePath: ./Dockerfile
     healthCheckPath: /readyz
-    maxShutdownDelaySeconds: 10
     autoDeployTrigger: checksPass
