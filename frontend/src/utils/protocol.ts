@@ -9,26 +9,42 @@ function isString(value: unknown): value is string {
   return typeof value === 'string';
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return isString(value) && value.length > 0;
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
 function isRunEvent(value: Record<string, unknown>): boolean {
-  return isString(value.run_id)
-    && isFiniteNumber(value.timestamp_ms)
-    && isFiniteNumber(value.simulated_time_ms);
+  return isNonEmptyString(value.run_id)
+    && isNonNegativeInteger(value.timestamp_ms)
+    && isNonNegativeInteger(value.simulated_time_ms);
 }
 
 function parseTelemetry(value: unknown): Telemetry | null {
   if (!isRecord(value) || !isString(value.kind)) return null;
 
-  if (value.kind === 'spin_coat' && isFiniteNumber(value.rpm)) {
+  if (value.kind === 'spin_coat' && isFiniteNumber(value.rpm) && value.rpm >= 0) {
     return { kind: value.kind, rpm: value.rpm };
   }
-  if (value.kind === 'bake' && isFiniteNumber(value.temperature_c)) {
+  if (
+    value.kind === 'bake'
+    && isFiniteNumber(value.temperature_c)
+    && value.temperature_c >= 0
+  ) {
     return { kind: value.kind, temperature_c: value.temperature_c };
   }
-  if (value.kind === 'expose' && isFiniteNumber(value.intensity_mw_cm2)) {
+  if (
+    value.kind === 'expose'
+    && isFiniteNumber(value.intensity_mw_cm2)
+    && value.intensity_mw_cm2 >= 0
+  ) {
     return { kind: value.kind, intensity_mw_cm2: value.intensity_mw_cm2 };
   }
 
@@ -49,16 +65,16 @@ export function parseServerMessage(raw: string): ServerMessage {
     case 'connection_ready':
       return { schema_version: PROTOCOL_VERSION, type: value.type };
     case 'run_accepted':
-      if (isRunEvent(value) && isString(value.request_id)) {
+      if (isRunEvent(value) && isNonEmptyString(value.request_id)) {
         return value as ServerMessage;
       }
       break;
     case 'run_rejected':
       if (
-        (value.request_id === null || isString(value.request_id))
-        && isString(value.code)
-        && isString(value.message)
-        && isFiniteNumber(value.timestamp_ms)
+        (value.request_id === null || isNonEmptyString(value.request_id))
+        && isNonEmptyString(value.code)
+        && isNonEmptyString(value.message)
+        && isNonNegativeInteger(value.timestamp_ms)
       ) {
         return value as ServerMessage;
       }
@@ -66,7 +82,7 @@ export function parseServerMessage(raw: string): ServerMessage {
     case 'step_started':
       if (
         isRunEvent(value)
-        && isString(value.step_id)
+        && isNonEmptyString(value.step_id)
         && ['spin_coat', 'bake', 'expose'].includes(String(value.step_kind))
       ) {
         return value as ServerMessage;
@@ -76,9 +92,11 @@ export function parseServerMessage(raw: string): ServerMessage {
       const telemetry = parseTelemetry(value.telemetry);
       if (
         isRunEvent(value)
-        && isString(value.step_id)
-        && isFiniteNumber(value.progress_sec)
-        && isFiniteNumber(value.duration_sec)
+        && isNonEmptyString(value.step_id)
+        && isNonNegativeInteger(value.progress_sec)
+        && isNonNegativeInteger(value.duration_sec)
+        && value.duration_sec > 0
+        && value.progress_sec <= value.duration_sec
         && telemetry
       ) {
         return { ...value, telemetry } as ServerMessage;
@@ -87,7 +105,7 @@ export function parseServerMessage(raw: string): ServerMessage {
     }
     case 'step_completed': {
       const telemetry = parseTelemetry(value.telemetry);
-      if (isRunEvent(value) && isString(value.step_id) && telemetry) {
+      if (isRunEvent(value) && isNonEmptyString(value.step_id) && telemetry) {
         return { ...value, telemetry } as ServerMessage;
       }
       break;
@@ -98,7 +116,7 @@ export function parseServerMessage(raw: string): ServerMessage {
     case 'run_cancelled':
       if (
         isRunEvent(value)
-        && (value.step_id === null || isString(value.step_id))
+        && (value.step_id === null || isNonEmptyString(value.step_id))
       ) {
         return value as ServerMessage;
       }
@@ -106,15 +124,15 @@ export function parseServerMessage(raw: string): ServerMessage {
     case 'run_failed':
       if (
         isRunEvent(value)
-        && (value.step_id === null || isString(value.step_id))
-        && isString(value.code)
-        && isString(value.message)
+        && (value.step_id === null || isNonEmptyString(value.step_id))
+        && isNonEmptyString(value.code)
+        && isNonEmptyString(value.message)
       ) {
         return value as ServerMessage;
       }
       break;
     case 'pong':
-      if (isString(value.request_id)) return value as ServerMessage;
+      if (isNonEmptyString(value.request_id)) return value as ServerMessage;
       break;
   }
 
