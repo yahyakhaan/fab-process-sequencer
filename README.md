@@ -20,7 +20,7 @@ In semiconductor manufacturing, iteration speed is often limited by rigid hardwa
 
 ## Tech Stack
 
-- **Frontend:** React, JavaScript, React Flow, WebSockets
+- **Frontend:** React, TypeScript, React Flow, WebSockets
 - **Backend:** Rust, Axum, Tokio, Serde
 - **Communication:** Full-duplex WebSockets
 - **Architecture:** Event-driven system using `mpsc` channels
@@ -46,14 +46,18 @@ In semiconductor manufacturing, iteration speed is often limited by rigid hardwa
 .
 ├── backend/
 │   ├── src/
-│   │   └── main.rs         # Axum server & concurrency logic
+│   │   ├── executor.rs     # Typed process simulation
+│   │   ├── models.rs       # Versioned wire protocol and validation
+│   │   ├── server.rs       # Axum WebSocket transport
+│   │   └── main.rs         # Application entry point
 │   └── Cargo.toml
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
 │   │   ├── hooks/
+│   │   ├── types/
 │   │   ├── utils/
-│   │   └── App.jsx
+│   │   └── App.tsx
 │   └── package.json
 └── README.md
 ```
