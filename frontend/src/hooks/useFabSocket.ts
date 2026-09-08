@@ -7,12 +7,17 @@ import type {
   TelemetrySeries,
 } from '../types/protocol';
 import type { StepRunStatus } from '../types/recipe';
+import {
+  HEARTBEAT_INTERVAL_MS,
+  assertProtocolPayloadSize,
+  getReconnectDelay,
+  isHeartbeatExpired,
+} from '../utils/connectionPolicy';
 import { parseServerMessage } from '../utils/protocol';
 import { formatServerMessage } from '../utils/stepConfig';
 import { appendTelemetrySample } from '../utils/telemetry';
 
 const MAX_LOG_ENTRIES = 500;
-const MAX_RECONNECT_DELAY_MS = 10_000;
 
 export type EventLogEntry = {
   id: number;
@@ -81,15 +86,19 @@ export function useFabSocket(url: string) {
   useEffect(() => {
     let disposed = false;
     let retryTimer: number | undefined;
+    let heartbeatTimer: number | undefined;
     let reconnectAttempt = 0;
+    let lastMessageAtMs = Date.now();
+
+    const stopHeartbeat = () => {
+      if (heartbeatTimer !== undefined) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
+    };
 
     const scheduleReconnect = () => {
-      const baseDelay = Math.min(
-        750 * 2 ** reconnectAttempt,
-        MAX_RECONNECT_DELAY_MS,
-      );
-      const jitter = Math.round(Math.random() * Math.min(500, baseDelay * 0.25));
-      const delay = baseDelay + jitter;
+      const delay = getReconnectDelay(reconnectAttempt);
       reconnectAttempt += 1;
       setRetryInMs(delay);
       retryTimer = window.setTimeout(connect, delay);
@@ -106,17 +115,36 @@ export function useFabSocket(url: string) {
       socket.onopen = () => {
         if (disposed || socketRef.current !== socket) return;
         reconnectAttempt = 0;
+        lastMessageAtMs = Date.now();
         setConnectionState('connected');
         setRetryInMs(null);
+        stopHeartbeat();
+        heartbeatTimer = window.setInterval(() => {
+          if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) {
+            return;
+          }
+          if (isHeartbeatExpired(lastMessageAtMs, Date.now())) {
+            appendLog('Simulator heartbeat timed out', 'error');
+            socket.close(4000, 'Heartbeat timeout');
+            return;
+          }
+          socket.send(JSON.stringify({
+            schema_version: 1,
+            type: 'ping',
+            request_id: `heartbeat-${Date.now()}`,
+          } satisfies ClientMessage));
+        }, HEARTBEAT_INTERVAL_MS);
       };
 
       socket.onmessage = (event: MessageEvent<unknown>) => {
         if (disposed || socketRef.current !== socket) return;
+        lastMessageAtMs = Date.now();
         try {
           if (typeof event.data !== 'string') {
             throw new Error('Received a non-text WebSocket message.');
           }
 
+          assertProtocolPayloadSize(event.data);
           const message = parseServerMessage(event.data);
           const formatted = formatServerMessage(message);
           if (formatted) {
@@ -224,6 +252,7 @@ export function useFabSocket(url: string) {
 
       socket.onclose = () => {
         if (disposed || socketRef.current !== socket) return;
+        stopHeartbeat();
         socketRef.current = null;
         setConnectionState('disconnected');
         appendLog('Simulator connection closed', 'warning');
@@ -253,6 +282,7 @@ export function useFabSocket(url: string) {
     return () => {
       disposed = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      stopHeartbeat();
       const socket = socketRef.current;
       if (socket) {
         socketRef.current = null;
@@ -267,7 +297,9 @@ export function useFabSocket(url: string) {
         throw new Error('The simulator is disconnected. Retry the connection first.');
       }
 
-      socketRef.current.send(JSON.stringify(message));
+      const payload = JSON.stringify(message);
+      assertProtocolPayloadSize(payload);
+      socketRef.current.send(payload);
 
       if (message.type === 'run_recipe') {
         setCurrentRunId(null);
