@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::Duration;
+use std::{env, path::PathBuf};
 
 use axum::{
     Json, Router,
@@ -10,7 +11,10 @@ use axum::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
+    http::{
+        HeaderMap, StatusCode,
+        header::{HOST, ORIGIN},
+    },
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -19,7 +23,7 @@ use tokio::{
     sync::{Semaphore, mpsc, watch},
     task::JoinHandle,
 };
-use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::{Instrument, info, info_span, warn};
 
 use crate::executor::run_recipe;
@@ -87,14 +91,24 @@ fn build_router_with_run_limit(max_concurrent_runs: usize) -> (Router, ServiceCo
     };
     let control = ServiceControl { ready, shutdown };
 
+    let static_directory = static_directory();
+    let index_file = static_directory.join("index.html");
+    let static_files =
+        ServeDir::new(static_directory).not_found_service(ServeFile::new(index_file));
     let router = Router::new()
         .route("/healthz", get(health))
         .route("/readyz", get(readiness))
         .route("/ws", get(ws_handler))
         .with_state(state)
-        .layer(CorsLayer::permissive());
+        .fallback_service(static_files);
 
     (router, control)
+}
+
+fn static_directory() -> PathBuf {
+    env::var_os("FAB_STATIC_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist"))
 }
 
 async fn health() -> Json<StatusBody> {
@@ -114,9 +128,17 @@ async fn readiness(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+async fn ws_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
     if !state.ready.load(Ordering::Acquire) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    if !websocket_origin_is_allowed(&headers) {
+        warn!("rejected websocket with a missing or cross-origin Origin header");
+        return StatusCode::FORBIDDEN.into_response();
     }
 
     let connection_id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
@@ -127,6 +149,24 @@ async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Resp
             handle_socket(socket, state).instrument(info_span!("websocket", connection_id))
         })
         .into_response()
+}
+
+fn websocket_origin_is_allowed(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(HOST).and_then(|value| value.to_str().ok()) else {
+        return false;
+    };
+    let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) else {
+        return false;
+    };
+    let Some(authority) = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+        .and_then(|value| value.split('/').next())
+    else {
+        return false;
+    };
+
+    !authority.is_empty() && authority.eq_ignore_ascii_case(host)
 }
 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
@@ -470,7 +510,9 @@ mod tests {
     use tokio::task::JoinHandle;
     use tokio_tungstenite::{
         MaybeTlsStream, WebSocketStream, connect_async,
-        tungstenite::Message as ClientWebSocketMessage,
+        tungstenite::{
+            Message as ClientWebSocketMessage, client::IntoClientRequest, http::HeaderValue,
+        },
     };
     use tower::ServiceExt;
 
@@ -503,7 +545,21 @@ mod tests {
     }
 
     async fn connect(url: &str) -> TestSocket {
-        let (mut socket, _) = connect_async(url).await.expect("websocket should connect");
+        let mut request = url
+            .into_client_request()
+            .expect("websocket request should build");
+        let authority = url
+            .strip_prefix("ws://")
+            .and_then(|value| value.strip_suffix("/ws"))
+            .expect("test URL should have the expected shape");
+        request.headers_mut().insert(
+            "Origin",
+            HeaderValue::from_str(&format!("http://{authority}"))
+                .expect("test origin should be valid"),
+        );
+        let (mut socket, _) = connect_async(request)
+            .await
+            .expect("websocket should connect");
         assert_eq!(next_json(&mut socket).await["type"], "connection_ready");
         socket
     }
@@ -663,6 +719,28 @@ mod tests {
         );
 
         socket.close(None).await.expect("socket should close");
+        stop_server(control, server).await;
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_cross_origin_connections() {
+        let (url, control, server) = spawn_server(1).await;
+        let mut request = url
+            .into_client_request()
+            .expect("websocket request should build");
+        request.headers_mut().insert(
+            "Origin",
+            HeaderValue::from_static("https://untrusted.example"),
+        );
+
+        let error = connect_async(request)
+            .await
+            .expect_err("cross-origin websocket should be rejected");
+        assert!(matches!(
+            error,
+            tokio_tungstenite::tungstenite::Error::Http(response)
+                if response.status() == StatusCode::FORBIDDEN
+        ));
         stop_server(control, server).await;
     }
 

@@ -12,8 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .json()
         .init();
 
-    let bind_address =
-        std::env::var("FAB_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    let bind_address = bind_address();
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
     let local_address = listener.local_addr()?;
     let (app, control) = server::build_router();
@@ -24,6 +23,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     tracing::info!("fab backend stopped");
     Ok(())
+}
+
+fn bind_address() -> String {
+    if let Ok(address) = std::env::var("FAB_BIND_ADDR") {
+        return address;
+    }
+
+    std::env::var("PORT")
+        .map(|port| format!("0.0.0.0:{port}"))
+        .unwrap_or_else(|_| "127.0.0.1:3000".to_string())
 }
 
 async fn shutdown_signal(control: server::ServiceControl) {
