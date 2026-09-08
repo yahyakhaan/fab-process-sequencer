@@ -3,6 +3,12 @@ import type { Edge, Node } from 'reactflow';
 export const PROTOCOL_VERSION = 1 as const;
 
 export type StepKind = 'spin_coat' | 'bake' | 'expose';
+export type StepRunStatus =
+  | 'pending'
+  | 'active'
+  | 'completed'
+  | 'cancelled'
+  | 'failed';
 
 export type SpinCoatStep = {
   kind: 'spin_coat';
@@ -43,6 +49,8 @@ export type ProcessNodeData = {
   toolId: string;
   step: StepConfig;
   isActive?: boolean;
+  runStatus?: StepRunStatus;
+  isLocked?: boolean;
   updateNodeData?: UpdateNodeData;
   deleteNode?: DeleteNode;
 };

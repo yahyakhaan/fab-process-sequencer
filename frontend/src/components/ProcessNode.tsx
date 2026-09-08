@@ -11,6 +11,14 @@ import {
   validateStep,
 } from '../utils/stepConfig';
 
+const STATUS_LABELS = {
+  pending: 'Pending',
+  active: 'Running',
+  completed: 'Complete',
+  cancelled: 'Cancelled',
+  failed: 'Failed',
+} as const;
+
 export default function ProcessNode({
   data,
   id,
@@ -18,6 +26,7 @@ export default function ProcessNode({
 }: NodeProps<ProcessNodeData>) {
   const onChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
+      if (data.isLocked) return;
       const field = event.target.name as EditableStepField;
       data.updateNodeData?.(id, field, Number(event.target.value));
     },
@@ -37,13 +46,14 @@ export default function ProcessNode({
 
   return (
     <article
-      className={`process-node${data.isActive ? ' process-node--active' : ''}${selected ? ' process-node--selected' : ''}`}
+      className={`process-node${data.isActive ? ' process-node--active' : ''}${selected ? ' process-node--selected' : ''}${data.runStatus ? ` process-node--${data.runStatus}` : ''}`}
       aria-label={`${data.label} process step`}
     >
       <Handle
         type="target"
         position={Position.Top}
         className="process-node__handle"
+        isConnectable={!data.isLocked}
       />
 
       <header className="process-node__header">
@@ -51,10 +61,16 @@ export default function ProcessNode({
           <strong>{data.label}</strong>
           <span>{data.toolId}</span>
         </div>
+        {data.runStatus && (
+          <span className={`process-node__status process-node__status--${data.runStatus}`}>
+            {STATUS_LABELS[data.runStatus]}
+          </span>
+        )}
         <button
           type="button"
           className="process-node__delete nodrag"
           onClick={() => data.deleteNode?.(id)}
+          disabled={data.isLocked}
           aria-label={`Delete ${data.label}`}
           title="Delete step"
         >
@@ -80,6 +96,7 @@ export default function ProcessNode({
             max={DURATION_SPEC.max}
             step={DURATION_SPEC.step}
             onChange={onChange}
+            disabled={data.isLocked}
           />
         </label>
         {durationIssue && (
@@ -105,6 +122,7 @@ export default function ProcessNode({
             max={parameter.max}
             step={parameter.step}
             onChange={onChange}
+            disabled={data.isLocked}
           />
         </label>
         {parameterIssue && (
@@ -118,6 +136,7 @@ export default function ProcessNode({
         type="source"
         position={Position.Bottom}
         className="process-node__handle"
+        isConnectable={!data.isLocked}
       />
     </article>
   );
