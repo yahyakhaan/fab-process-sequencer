@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: fab-process-sequencer
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /readyz
+    maxShutdownDelaySeconds: 10
+    autoDeployTrigger: checksPass

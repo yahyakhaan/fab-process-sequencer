@@ -15,7 +15,7 @@ In semiconductor manufacturing, iteration speed is often limited by rigid hardwa
 1. Drag nodes (Spin Coat, Bake, Exposure) onto canvas
 2. Configure parameters (RPM, temperature, duration, etc.)
 3. Connect nodes to define process flow
-4. Click **Deploy to Fab**
+4. Click **Run simulation**
 5. Watch real-time execution and telemetry updates
 
 ## Tech Stack
@@ -35,8 +35,8 @@ In semiconductor manufacturing, iteration speed is often limited by rigid hardwa
 
 ## Core Features
 
-- **Graph-Based Execution:** Processes are compiled into a directed graph and executed via topological sorting.
-- **High-Concurrency Backend:** Rust Tokio tasks simulate independent fab machines without blocking.
+- **Recipe Execution:** Connected recipes are validated and executed as typed process steps.
+- **Bounded Async Backend:** Rust Tokio tasks stream simulation events without blocking the WebSocket server.
 - **Real-Time Telemetry:** Streaming system reports execution status live via WebSockets.
 - **Interactive UI:** Node-based drag-and-drop process builder with parameter editing and live feedback.
 
@@ -91,6 +91,12 @@ Open:
 http://localhost:5173
 ```
 
+Vite proxies `/ws` to the local Rust server. In production, the Rust service
+serves the compiled frontend and WebSocket from the same origin.
+
+```
+
 ## Vision
 
 Next: replace the simulator with real SCPI command dispatch to a physical instrument over USB or GPIB.
+```
