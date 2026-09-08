@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildExecutionSequence } from './graphParser.js';
+import type { ProcessFlowNode } from '../types/recipe.ts';
+import { buildExecutionSequence } from './graphParser.ts';
 
-function node(id) {
+function node(id: string): ProcessFlowNode {
   return {
     id,
+    position: { x: 0, y: 0 },
+    type: 'processNode',
     data: {
-      action: id,
-      duration_sec: 1,
-      target_value: 1,
+      label: id,
+      toolId: `${id}-tool`,
+      step: { kind: 'bake', duration_sec: 1, temperature_c: 120 },
     },
   };
 }
@@ -21,8 +24,8 @@ test('returns an empty sequence for an empty canvas', () => {
 test('orders a linear recipe by its edges rather than node array order', () => {
   const nodes = [node('bake'), node('expose'), node('spin')];
   const edges = [
-    { source: 'spin', target: 'bake' },
-    { source: 'bake', target: 'expose' },
+    { id: 'spin-bake', source: 'spin', target: 'bake' },
+    { id: 'bake-expose', source: 'bake', target: 'expose' },
   ];
 
   assert.deepEqual(
@@ -34,8 +37,8 @@ test('orders a linear recipe by its edges rather than node array order', () => {
 test('rejects a cycle that has no root node', () => {
   const nodes = [node('a'), node('b')];
   const edges = [
-    { source: 'a', target: 'b' },
-    { source: 'b', target: 'a' },
+    { id: 'a-b', source: 'a', target: 'b' },
+    { id: 'b-a', source: 'b', target: 'a' },
   ];
 
   assert.throws(
