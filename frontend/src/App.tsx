@@ -22,7 +22,9 @@ import type {
 } from 'reactflow';
 
 import ProcessNode from './components/ProcessNode';
+import TelemetryPlot from './components/TelemetryPlot';
 import { useFabSocket } from './hooks/useFabSocket';
+import type { FaultInjection } from './types/protocol';
 import type {
   EditableStepField,
   ProcessFlowEdge,
@@ -57,7 +59,7 @@ const DEFAULT_EDGE_OPTIONS: DefaultEdgeOptions = {
 };
 
 type EditorMessage = {
-  tone: 'info' | 'error' | 'success';
+  tone: 'info' | 'error' | 'success' | 'warning';
   text: string;
 };
 
@@ -68,14 +70,31 @@ function App() {
     useState<ReactFlowInstance<ProcessNodeData> | null>(null);
   const [editorMessage, setEditorMessage] =
     useState<EditorMessage | null>(null);
+  const [faultInjection, setFaultInjection] =
+    useState<FaultInjection>(null);
   const recipeId = useRef(crypto.randomUUID());
   const flowContainerRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { logs, activeStepId, connectionState, sendMessage, clearLogs } =
-    useFabSocket(getFabWebSocketUrl());
+  const telemetryStreamRef = useRef<HTMLDivElement>(null);
+  const {
+    logs,
+    activeStepId,
+    currentRunId,
+    latestTelemetryStepId,
+    stepStates,
+    telemetrySeries,
+    runState,
+    lastError,
+    connectionState,
+    retryInMs,
+    sendMessage,
+    retry,
+    resetRun,
+    clearLogs,
+  } = useFabSocket(getFabWebSocketUrl());
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const stream = telemetryStreamRef.current;
+    if (stream) stream.scrollTop = stream.scrollHeight;
   }, [logs]);
 
   const editorIssues = useMemo(
@@ -85,9 +104,36 @@ function App() {
   const selectedNodeCount = nodes.filter((node) => node.selected).length;
   const selectedEdgeCount = edges.filter((edge) => edge.selected).length;
   const selectedCount = selectedNodeCount + selectedEdgeCount;
+  const editorLocked = runState === 'validating' || runState === 'running';
+  const recipeRevision = useMemo(
+    () => JSON.stringify({
+      nodes: nodes.map((node) => ({ id: node.id, data: node.data })),
+      edges: edges.map(({ id, source, target }) => ({ id, source, target })),
+      faultInjection,
+    }),
+    [edges, faultInjection, nodes],
+  );
+  const previousRecipeRevision = useRef(recipeRevision);
+  const plotStepId =
+    nodes.find((node) => node.selected)?.id
+    ?? activeStepId
+    ?? latestTelemetryStepId
+    ?? undefined;
+  const plotStepLabel = nodes.find((node) => node.id === plotStepId)?.data.label;
+  const selectedTelemetrySeries = plotStepId
+    ? telemetrySeries[plotStepId]
+    : undefined;
+
+  useEffect(() => {
+    if (previousRecipeRevision.current !== recipeRevision) {
+      previousRecipeRevision.current = recipeRevision;
+      resetRun();
+    }
+  }, [recipeRevision, resetRun]);
 
   const updateNodeData = useCallback(
     (nodeId: string, field: EditableStepField, value: number) => {
+      if (editorLocked) return;
       setNodes((currentNodes) =>
         currentNodes.map((node) =>
           node.id === nodeId
@@ -103,10 +149,11 @@ function App() {
       );
       setEditorMessage(null);
     },
-    [],
+    [editorLocked],
   );
 
   const deleteNode = useCallback((nodeId: string) => {
+    if (editorLocked) return;
     setNodes((currentNodes) =>
       currentNodes.filter((node) => node.id !== nodeId),
     );
@@ -116,7 +163,7 @@ function App() {
       ),
     );
     setEditorMessage({ tone: 'info', text: 'Process step removed.' });
-  }, []);
+  }, [editorLocked]);
 
   const renderedNodes = useMemo(
     () =>
@@ -125,11 +172,20 @@ function App() {
         data: {
           ...node.data,
           isActive: node.id === activeStepId,
+          runStatus: stepStates[node.id],
+          isLocked: editorLocked,
           updateNodeData,
           deleteNode,
         },
       })),
-    [nodes, activeStepId, updateNodeData, deleteNode],
+    [
+      nodes,
+      activeStepId,
+      stepStates,
+      editorLocked,
+      updateNodeData,
+      deleteNode,
+    ],
   );
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -163,6 +219,7 @@ function App() {
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (editorLocked) return;
       const issue = getConnectionIssue(connection, edges);
       if (issue) {
         setEditorMessage({ tone: 'error', text: issue });
@@ -184,11 +241,12 @@ function App() {
       );
       setEditorMessage({ tone: 'success', text: 'Process steps connected.' });
     },
-    [edges],
+    [edges, editorLocked],
   );
 
   const addStepAt = useCallback(
     (kind: StepKind, position: XYPosition) => {
+      if (editorLocked) return;
       if (nodes.length >= MAX_RECIPE_NODES) {
         setEditorMessage({
           tone: 'error',
@@ -204,7 +262,7 @@ function App() {
         text: `${newNode.data.label} added. Drag from one node handle to another to connect it.`,
       });
     },
-    [nodes.length],
+    [editorLocked, nodes.length],
   );
 
   const addStepToCanvas = useCallback(
@@ -245,6 +303,13 @@ function App() {
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault();
+      if (editorLocked) {
+        setEditorMessage({
+          tone: 'warning',
+          text: 'Editing is locked while a simulation is active.',
+        });
+        return;
+      }
       const kind = event.dataTransfer.getData(STEP_KIND_DRAG_TYPE);
       if (!flowInstance || !isStepKind(kind)) {
         setEditorMessage({
@@ -262,10 +327,11 @@ function App() {
         }),
       );
     },
-    [addStepAt, flowInstance],
+    [addStepAt, editorLocked, flowInstance],
   );
 
   const deleteSelection = useCallback(() => {
+    if (editorLocked) return;
     const selectedNodeIds = new Set(
       nodes.filter((node) => node.selected).map((node) => node.id),
     );
@@ -296,17 +362,18 @@ function App() {
       tone: 'info',
       text: `${selectedCount} selected ${selectedCount === 1 ? 'item' : 'items'} removed.`,
     });
-  }, [edges, nodes, selectedCount]);
+  }, [edges, editorLocked, nodes, selectedCount]);
 
   const deleteEdge = useCallback(
     (event: ReactMouseEvent, edge: ProcessFlowEdge) => {
       event.preventDefault();
+      if (editorLocked) return;
       setEdges((currentEdges) =>
         currentEdges.filter((candidate) => candidate.id !== edge.id),
       );
       setEditorMessage({ tone: 'info', text: 'Connection removed.' });
     },
-    [],
+    [editorLocked],
   );
 
   const fitCanvas = useCallback(() => {
@@ -321,6 +388,7 @@ function App() {
   }, [flowInstance]);
 
   const loadSample = useCallback(() => {
+    if (editorLocked) return;
     const sample = createSampleGraph();
     setNodes(sample.nodes);
     setEdges(sample.edges);
@@ -332,14 +400,15 @@ function App() {
     requestAnimationFrame(() => {
       void flowInstance?.fitView({ padding: 0.24, duration: 300 });
     });
-  }, [flowInstance]);
+  }, [editorLocked, flowInstance]);
 
   const clearCanvas = useCallback(() => {
+    if (editorLocked) return;
     setNodes([]);
     setEdges([]);
     recipeId.current = crypto.randomUUID();
     setEditorMessage({ tone: 'info', text: 'Canvas cleared.' });
-  }, []);
+  }, [editorLocked]);
 
   const runSimulation = useCallback(() => {
     const issue = getEditorIssues(nodes, edges)[0];
@@ -369,7 +438,7 @@ function App() {
         type: 'run_recipe',
         request_id: crypto.randomUUID(),
         recipe,
-        simulation: { time_scale: 10, fault: null },
+        simulation: { time_scale: 10, fault: faultInjection },
       });
       setEditorMessage({
         tone: 'success',
@@ -384,17 +453,57 @@ function App() {
             : 'Unable to run the recipe.',
       });
     }
-  }, [edges, nodes, sendMessage]);
+  }, [edges, faultInjection, nodes, sendMessage]);
+
+  const cancelSimulation = useCallback(() => {
+    if (!currentRunId) return;
+    try {
+      sendMessage({
+        schema_version: PROTOCOL_VERSION,
+        type: 'cancel_run',
+        request_id: crypto.randomUUID(),
+        run_id: currentRunId,
+      });
+      setEditorMessage({
+        tone: 'warning',
+        text: 'Stopping the active simulation safely…',
+      });
+    } catch (error: unknown) {
+      setEditorMessage({
+        tone: 'error',
+        text: error instanceof Error ? error.message : 'Unable to cancel the run.',
+      });
+    }
+  }, [currentRunId, sendMessage]);
 
   const displayedIssue = editorIssues.find((issue) => issue.id !== 'empty-recipe');
-  const canvasMessage = editorMessage
+  const lifecycleMessage: EditorMessage | null =
+    runState === 'validating'
+      ? { tone: 'info', text: 'Validating recipe with the Rust simulator…' }
+      : runState === 'running'
+        ? {
+            tone: 'info',
+            text: activeStepId
+              ? `Simulation running · ${nodes.find((node) => node.id === activeStepId)?.data.label ?? activeStepId}`
+              : 'Simulation running · waiting for the next process step',
+          }
+        : runState === 'completed'
+          ? { tone: 'success', text: 'Run completed successfully.' }
+          : runState === 'cancelled'
+            ? { tone: 'warning', text: 'Run cancelled. The recipe is ready to edit or run again.' }
+            : runState === 'failed'
+              ? { tone: 'error', text: lastError ?? 'The run failed.' }
+              : null;
+  const canvasMessage = lifecycleMessage ?? editorMessage
     ?? (displayedIssue
       ? { tone: 'error' as const, text: displayedIssue.message }
       : nodes.length > 0
         ? { tone: 'success' as const, text: 'Recipe inputs are within simulator limits.' }
         : null);
   const canRun =
-    connectionState === 'connected' && editorIssues.length === 0;
+    connectionState === 'connected'
+    && !editorLocked
+    && editorIssues.length === 0;
 
   return (
     <main className="app-shell">
@@ -411,24 +520,41 @@ function App() {
           </div>
         </div>
         <div className="header-actions">
+          <span className={`run-state-badge run-state-badge--${runState}`}>
+            Run {runState}
+          </span>
           <span className={`connection-badge connection-badge--${connectionState}`}>
             <span aria-hidden="true" />
             Simulator {connectionState}
           </span>
-          <button
-            type="button"
-            className="button button--primary"
-            onClick={runSimulation}
-            disabled={!canRun}
-            title={
-              connectionState !== 'connected'
-                ? 'Connect the simulator backend to run'
-                : editorIssues[0]?.message
-            }
-          >
-            <span aria-hidden="true">▶</span>
-            Run simulation
-          </button>
+          {runState === 'running' ? (
+            <button
+              type="button"
+              className="button button--cancel"
+              onClick={cancelSimulation}
+              disabled={!currentRunId}
+            >
+              <span aria-hidden="true">■</span>
+              Cancel run
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={runSimulation}
+              disabled={!canRun}
+              title={
+                connectionState !== 'connected'
+                  ? 'Connect the simulator backend to run'
+                  : editorIssues[0]?.message
+              }
+            >
+              <span aria-hidden="true">
+                {runState === 'validating' ? '⋯' : '▶'}
+              </span>
+              {runState === 'validating' ? 'Validating' : 'Run simulation'}
+            </button>
+          )}
         </div>
       </header>
 
@@ -448,7 +574,8 @@ function App() {
                 key={template.kind}
                 type="button"
                 className="palette-card"
-                draggable
+                draggable={!editorLocked}
+                disabled={editorLocked}
                 onDragStart={(event) =>
                   onPaletteDragStart(event, template.kind)}
                 onClick={() => addStepToCanvas(template.kind)}
@@ -464,15 +591,43 @@ function App() {
             ))}
           </div>
 
+          <label className="fault-control">
+            <span>
+              Failure demo
+              <small>Simulation only</small>
+            </span>
+            <select
+              value={faultInjection ?? 'none'}
+              onChange={(event) => {
+                const value = event.target.value;
+                setFaultInjection(
+                  value === 'tool_fault' || value === 'sensor_out_of_range'
+                    ? value
+                    : null,
+                );
+              }}
+              disabled={editorLocked}
+            >
+              <option value="none">No injected fault</option>
+              <option value="tool_fault">Tool interlock trip</option>
+              <option value="sensor_out_of_range">Sensor out of range</option>
+            </select>
+          </label>
+
           <div className="palette__footer">
-            <button type="button" className="button" onClick={loadSample}>
+            <button
+              type="button"
+              className="button"
+              onClick={loadSample}
+              disabled={editorLocked}
+            >
               Load sample
             </button>
             <button
               type="button"
               className="button button--danger-quiet"
               onClick={clearCanvas}
-              disabled={nodes.length === 0 && edges.length === 0}
+              disabled={editorLocked || (nodes.length === 0 && edges.length === 0)}
             >
               Clear canvas
             </button>
@@ -497,7 +652,10 @@ function App() {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onEdgeDoubleClick={deleteEdge}
-            deleteKeyCode={['Backspace', 'Delete']}
+            deleteKeyCode={editorLocked ? null : ['Backspace', 'Delete']}
+            nodesDraggable={!editorLocked}
+            nodesConnectable={!editorLocked}
+            edgesUpdatable={!editorLocked}
             fitView
             fitViewOptions={{ padding: 0.24 }}
             minZoom={0.35}
@@ -517,7 +675,7 @@ function App() {
               <button
                 type="button"
                 onClick={deleteSelection}
-                disabled={selectedCount === 0}
+                disabled={editorLocked || selectedCount === 0}
                 title="Delete selected items (Delete or Backspace)"
               >
                 Delete selected{selectedCount > 0 ? ` (${selectedCount})` : ''}
@@ -557,34 +715,65 @@ function App() {
           <div className="panel-heading telemetry__heading">
             <div>
               <span>Live telemetry</span>
-              <small>WebSocket event stream</small>
+              <small>Selected or active process step</small>
+            </div>
+            <span className={`run-state-dot run-state-dot--${runState}`} />
+          </div>
+
+          <div className="telemetry__plot-wrap">
+            <TelemetryPlot
+              series={selectedTelemetrySeries}
+              stepLabel={plotStepLabel}
+            />
+          </div>
+
+          <div className="event-log__heading">
+            <div>
+              <strong>Event log</strong>
+              <span>{logs.length} events</span>
             </div>
             <button type="button" onClick={clearLogs} disabled={logs.length === 0}>
               Clear
             </button>
           </div>
 
-          <div className="telemetry__stream" aria-live="polite">
+          <div
+            ref={telemetryStreamRef}
+            className="telemetry__stream"
+            aria-live="polite"
+          >
             {logs.length === 0 ? (
-              <div className="telemetry__empty">
-                <span aria-hidden="true">⌁</span>
-                <p>Run a valid recipe to stream simulated tool data.</p>
+              <div className="event-log__empty">No simulator events yet.</div>
+            ) : logs.map((log) => (
+              <div
+                key={log.id}
+                className={`telemetry__line telemetry__line--${log.tone}`}
+              >
+                <time dateTime={new Date(log.timestampMs).toISOString()}>
+                  {new Date(log.timestampMs).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false,
+                  })}
+                </time>
+                <span>{log.message}</span>
               </div>
-            ) : (
-              logs.map((log, index) => (
-                <div key={`${index}-${log}`} className="telemetry__line">
-                  {log}
-                </div>
-              ))
-            )}
-            <div ref={messagesEndRef} />
+            ))}
           </div>
 
           <footer className="telemetry__footer">
-            <span className={`connection-dot connection-dot--${connectionState}`} />
-            {connectionState === 'connected'
-              ? 'Listening for simulator events'
-              : `Simulator ${connectionState}`}
+            <div>
+              <span className={`connection-dot connection-dot--${connectionState}`} />
+              {connectionState === 'connected'
+                ? 'Listening for simulator events'
+                : retryInMs
+                  ? `Retrying in ${(retryInMs / 1_000).toFixed(1)}s`
+                  : `Simulator ${connectionState}`}
+            </div>
+            {connectionState !== 'connected' && (
+              <button type="button" onClick={retry}>Retry now</button>
+            )}
           </footer>
         </aside>
       </div>
