@@ -2,8 +2,13 @@ import type { Recipe, StepKind } from './recipe';
 
 export type SimulationConfig = {
   time_scale: number;
-  fault: null;
+  fault: FaultInjection;
 };
+
+export type FaultInjection =
+  | null
+  | 'tool_fault'
+  | 'sensor_out_of_range';
 
 export type ClientMessage =
   | {
@@ -12,6 +17,12 @@ export type ClientMessage =
       request_id: string;
       recipe: Recipe;
       simulation: SimulationConfig;
+    }
+  | {
+      schema_version: 1;
+      type: 'cancel_run';
+      request_id: string;
+      run_id: string;
     }
   | {
       schema_version: 1;
@@ -64,6 +75,16 @@ export type ServerMessage =
       telemetry: Telemetry;
     })
   | (RunEvent & { type: 'run_completed' })
+  | (RunEvent & {
+      type: 'run_cancelled';
+      step_id: string | null;
+    })
+  | (RunEvent & {
+      type: 'run_failed';
+      step_id: string | null;
+      code: string;
+      message: string;
+    })
   | { schema_version: 1; type: 'pong'; request_id: string };
 
 export type ConnectionState =
@@ -71,3 +92,22 @@ export type ConnectionState =
   | 'connected'
   | 'disconnected'
   | 'error';
+
+export type RunState =
+  | 'idle'
+  | 'validating'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export type TelemetrySeries = {
+  stepId: string;
+  kind: Telemetry['kind'];
+  label: string;
+  unit: string;
+  samples: Array<{
+    simulatedTimeMs: number;
+    value: number;
+  }>;
+};

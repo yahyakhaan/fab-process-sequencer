@@ -95,6 +95,24 @@ export function parseServerMessage(raw: string): ServerMessage {
     case 'run_completed':
       if (isRunEvent(value)) return value as ServerMessage;
       break;
+    case 'run_cancelled':
+      if (
+        isRunEvent(value)
+        && (value.step_id === null || isString(value.step_id))
+      ) {
+        return value as ServerMessage;
+      }
+      break;
+    case 'run_failed':
+      if (
+        isRunEvent(value)
+        && (value.step_id === null || isString(value.step_id))
+        && isString(value.code)
+        && isString(value.message)
+      ) {
+        return value as ServerMessage;
+      }
+      break;
     case 'pong':
       if (isString(value.request_id)) return value as ServerMessage;
       break;

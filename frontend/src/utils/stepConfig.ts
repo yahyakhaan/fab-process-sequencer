@@ -146,6 +146,10 @@ export function formatServerMessage(message: ServerMessage): string | null {
       return `> [${message.step_id}] completed at ${formatTelemetry(message.telemetry)}`;
     case 'run_completed':
       return `> Run ${message.run_id} complete`;
+    case 'run_cancelled':
+      return `> Run ${message.run_id} cancelled`;
+    case 'run_failed':
+      return `> ERROR [${message.code}] ${message.message}`;
     case 'pong':
       return null;
   }

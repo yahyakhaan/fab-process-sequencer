@@ -45,3 +45,27 @@ test('rejects a telemetry payload with the wrong metric', () => {
     /malformed step_progress/,
   );
 });
+
+test('parses cancelled and failed terminal run events', () => {
+  const cancelled = parseServerMessage(JSON.stringify({
+    schema_version: 1,
+    type: 'run_cancelled',
+    run_id: 'run-1',
+    step_id: 'step-1',
+    timestamp_ms: 100,
+    simulated_time_ms: 5_000,
+  }));
+  const failed = parseServerMessage(JSON.stringify({
+    schema_version: 1,
+    type: 'run_failed',
+    run_id: 'run-2',
+    step_id: 'step-2',
+    code: 'tool_fault',
+    message: 'Simulated interlock trip',
+    timestamp_ms: 200,
+    simulated_time_ms: 8_000,
+  }));
+
+  assert.equal(cancelled.type, 'run_cancelled');
+  assert.equal(failed.type, 'run_failed');
+});
