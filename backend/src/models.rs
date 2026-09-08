@@ -93,19 +93,23 @@ impl StepConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultInjection {
+    ToolFault,
+    SensorOutOfRange,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SimulationConfig {
     pub time_scale: f64,
-    pub fault: Option<String>,
+    pub fault: Option<FaultInjection>,
 }
 
 impl SimulationConfig {
     pub fn validate(&self) -> Result<(), String> {
         if !self.time_scale.is_finite() || !(1.0..=100.0).contains(&self.time_scale) {
             return Err("time_scale must be finite and from 1 to 100".to_string());
-        }
-        if self.fault.is_some() {
-            return Err("fault injection is not available in this phase".to_string());
         }
         Ok(())
     }
@@ -119,6 +123,11 @@ pub enum ClientMessage {
         request_id: String,
         recipe: Recipe,
         simulation: SimulationConfig,
+    },
+    CancelRun {
+        schema_version: u16,
+        request_id: String,
+        run_id: String,
     },
     Ping {
         schema_version: u16,
@@ -183,6 +192,22 @@ pub enum ServerMessage {
     RunCompleted {
         schema_version: u16,
         run_id: String,
+        timestamp_ms: u64,
+        simulated_time_ms: u64,
+    },
+    RunCancelled {
+        schema_version: u16,
+        run_id: String,
+        step_id: Option<String>,
+        timestamp_ms: u64,
+        simulated_time_ms: u64,
+    },
+    RunFailed {
+        schema_version: u16,
+        run_id: String,
+        step_id: Option<String>,
+        code: String,
+        message: String,
         timestamp_ms: u64,
         simulated_time_ms: u64,
     },
@@ -298,8 +323,8 @@ pub fn timestamp_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientMessage, PROTOCOL_VERSION, Recipe, RecipeEdge, RecipeNode, ServerMessage,
-        SimulationConfig, StepConfig, validate_recipe,
+        ClientMessage, FaultInjection, PROTOCOL_VERSION, Recipe, RecipeEdge, RecipeNode,
+        ServerMessage, SimulationConfig, StepConfig, validate_recipe,
     };
 
     fn valid_recipe() -> Recipe {
@@ -360,7 +385,9 @@ mod tests {
                 assert_eq!(recipe.nodes.len(), 1);
                 assert_eq!(simulation.time_scale, 10.0);
             }
-            ClientMessage::Ping { .. } => panic!("expected run_recipe"),
+            ClientMessage::CancelRun { .. } | ClientMessage::Ping { .. } => {
+                panic!("expected run_recipe")
+            }
         }
     }
 
@@ -400,5 +427,22 @@ mod tests {
         };
 
         assert!(simulation.validate().is_err());
+    }
+
+    #[test]
+    fn deserializes_cancel_and_fault_injection_messages() {
+        let cancel: ClientMessage = serde_json::from_str(
+            r#"{"schema_version":1,"type":"cancel_run","request_id":"request-2","run_id":"run-1"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            cancel,
+            ClientMessage::CancelRun { run_id, .. } if run_id == "run-1"
+        ));
+
+        let fault: SimulationConfig =
+            serde_json::from_str(r#"{"time_scale":10,"fault":"sensor_out_of_range"}"#).unwrap();
+        assert_eq!(fault.fault, Some(FaultInjection::SensorOutOfRange));
+        assert!(fault.validate().is_ok());
     }
 }
