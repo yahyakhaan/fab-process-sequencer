@@ -36,12 +36,15 @@ export type UpdateNodeData = (
   value: number,
 ) => void;
 
+export type DeleteNode = (nodeId: string) => void;
+
 export type ProcessNodeData = {
   label: string;
   toolId: string;
   step: StepConfig;
   isActive?: boolean;
   updateNodeData?: UpdateNodeData;
+  deleteNode?: DeleteNode;
 };
 
 export type ProcessFlowNode = Node<ProcessNodeData, 'processNode'>;

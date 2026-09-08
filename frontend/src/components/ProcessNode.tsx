@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { ChangeEvent, CSSProperties } from 'react';
+import type { ChangeEvent } from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 
@@ -11,7 +11,11 @@ import {
   validateStep,
 } from '../utils/stepConfig';
 
-export default function ProcessNode({ data, id }: NodeProps<ProcessNodeData>) {
+export default function ProcessNode({
+  data,
+  id,
+  selected,
+}: NodeProps<ProcessNodeData>) {
   const onChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const field = event.target.name as EditableStepField;
@@ -22,37 +26,53 @@ export default function ProcessNode({ data, id }: NodeProps<ProcessNodeData>) {
 
   const parameter = getParameterSpec(data.step);
   const issues = validateStep(data.step);
-  const invalidFields = new Set(issues.map((issue) => issue.field));
-  const inputStyle: CSSProperties = {
-    width: '70px',
-    background: '#333',
-    color: '#fff',
-    border: '1px solid #555',
-  };
-  const containerStyle: CSSProperties = {
-    background: data.isActive ? '#1a3320' : '#222',
-    border: data.isActive ? '2px solid #00ff00' : '1px solid #555',
-    boxShadow: data.isActive ? '0 0 15px rgba(0, 255, 0, 0.4)' : 'none',
-    transition: 'all 0.2s ease-in-out',
-    borderRadius: '8px',
-    padding: '10px',
-    color: '#fff',
-    minWidth: '190px',
-  };
+  const durationIssue = issues.find(
+    (issue) => issue.field === DURATION_SPEC.field,
+  );
+  const parameterIssue = issues.find(
+    (issue) => issue.field === parameter.field,
+  );
+  const durationErrorId = `${id}-duration-error`;
+  const parameterErrorId = `${id}-${parameter.field}-error`;
 
   return (
-    <div style={containerStyle}>
-      <Handle type="target" position={Position.Top} style={{ background: '#555' }} />
+    <article
+      className={`process-node${data.isActive ? ' process-node--active' : ''}${selected ? ' process-node--selected' : ''}`}
+      aria-label={`${data.label} process step`}
+    >
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="process-node__handle"
+      />
 
-      <div style={{ fontWeight: 'bold', marginBottom: '8px', borderBottom: '1px solid #444', paddingBottom: '4px' }}>
-        {data.label}
-      </div>
+      <header className="process-node__header">
+        <div>
+          <strong>{data.label}</strong>
+          <span>{data.toolId}</span>
+        </div>
+        <button
+          type="button"
+          className="process-node__delete nodrag"
+          onClick={() => data.deleteNode?.(id)}
+          aria-label={`Delete ${data.label}`}
+          title="Delete step"
+        >
+          ×
+        </button>
+      </header>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '12px' }}>
-        <label style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-          {DURATION_SPEC.label} ({DURATION_SPEC.unit}):
+      <div className="process-node__fields">
+        <label htmlFor={`${id}-duration`}>
+          <span>
+            {DURATION_SPEC.label}
+            <small>{DURATION_SPEC.unit}</small>
+          </span>
           <input
-            aria-invalid={invalidFields.has('duration_sec')}
+            id={`${id}-duration`}
+            className="nodrag nowheel"
+            aria-invalid={Boolean(durationIssue)}
+            aria-describedby={durationIssue ? durationErrorId : undefined}
             name={DURATION_SPEC.field}
             type="number"
             value={data.step.duration_sec}
@@ -60,14 +80,24 @@ export default function ProcessNode({ data, id }: NodeProps<ProcessNodeData>) {
             max={DURATION_SPEC.max}
             step={DURATION_SPEC.step}
             onChange={onChange}
-            style={inputStyle}
           />
         </label>
+        {durationIssue && (
+          <small id={durationErrorId} className="process-node__error" role="alert">
+            {durationIssue.message}
+          </small>
+        )}
 
-        <label style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-          {parameter.label} ({parameter.unit}):
+        <label htmlFor={`${id}-${parameter.field}`}>
+          <span>
+            {parameter.label}
+            <small>{parameter.unit}</small>
+          </span>
           <input
-            aria-invalid={invalidFields.has(parameter.field)}
+            id={`${id}-${parameter.field}`}
+            className="nodrag nowheel"
+            aria-invalid={Boolean(parameterIssue)}
+            aria-describedby={parameterIssue ? parameterErrorId : undefined}
             name={parameter.field}
             type="number"
             value={getParameterValue(data.step)}
@@ -75,12 +105,20 @@ export default function ProcessNode({ data, id }: NodeProps<ProcessNodeData>) {
             max={parameter.max}
             step={parameter.step}
             onChange={onChange}
-            style={inputStyle}
           />
         </label>
+        {parameterIssue && (
+          <small id={parameterErrorId} className="process-node__error" role="alert">
+            {parameterIssue.message}
+          </small>
+        )}
       </div>
 
-      <Handle type="source" position={Position.Bottom} style={{ background: '#555' }} />
-    </div>
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="process-node__handle"
+      />
+    </article>
   );
 }
